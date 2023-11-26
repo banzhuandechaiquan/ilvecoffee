@@ -552,4 +552,63 @@ p33
 
 ### 一、依赖注入
 
-#### 1.nest 依赖注入原理
+#### 1.nest 依赖注入原理/实现/传递
+
+​		依赖注入是一种技术，通过依赖注入，对象之间可以创建各种关系。在 Nest 应用程序中，关于所有依赖注入繁重的工作将委托给 "控制反转"(IpC)容器处理， "IpC" 容器为 NestJs 运行时系统。开发者只需要在控制器中处理相应请求。本质上，当我们“询问”类构造函数中的依赖项时。NestJs 处理并检索返回给我们的对象，以及它可能需要的任何依赖项，等等......
+
+步骤：
+
+① 通过 @Injectable() 装饰器声明了一个可以由 Nest "容器" 管理的类，这个装饰器将类标记为"提供者"。（例如：CoffeeService）
+
+② 在 module 中通过 providers 注册提供者，让 Nest 知道该类为一个提供者
+
+③ 当类中的构造函数中请求某个类，这个请求告诉 Nest 将提供程序 "注入" 到我们的控制器中，以便我们可以使用它。(例如： CoffeeController 构造函数中注入 CoffeeService 服务类)
+
+完整写法：
+
+```typescript
+providers: [
+  {
+  provide: CoffeesService, // TOKEN
+  useClass: CoffeesService, // 相关联的类
+  }
+],
+```
+
+注：当 Nest 实例化控制器时，首先检查是否有依赖项。如果有，Nest 容器将会通过 "TOKEN" 找到依赖项 ，并且返回依赖项。或者，在单例的正常情况下，如果已在其他地方请求过，则返回现有实例。
+
+依赖传递传递：
+
+​		上述依赖分析是可以传递的，例如服务类（提供者）本身也具有依赖关系，也将会得到解决。本质上依赖关系自下而上解决。
+
+#### 2.提供者的作用域
+
+​		默认情况下，NestJs 模块封装了自身的提供者，因此无法使用不直接属于本模块或其他模块未导出的提供者。 注入非本模块的提供者时，需要先 "导入" 其他已明确导出 "提供者" 的模块。另外，从模块中 "导出" 的提供者可以看作//该模块的公共接口。
+
+```typescript
+// coffees.module.ts
+
+import { CoffeesService } from './coffees.service';
+exports: [CoffeesService],
+```
+
+```typescript
+// coffee-rating.module.ts
+
+import { CoffeesModule } from 'src/coffees/coffees.module';
+imports: [CoffeesModule],
+```
+
+```typescript
+// coffee-rating.service.ts
+
+import { CoffeesService } from 'src/coffees/coffees.service';
+constructor(private readonly coffeesService: CoffeesService) {}
+```
+
+#### 3.自定义提供程序(提供者)
+
+① useValue
+
+
+
