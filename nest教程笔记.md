@@ -1,0 +1,555 @@
+## **第一章**
+
+### 一、控制器：controller
+
+1.nest g co coffees --no-spec
+
+2.指定位置创建文件：
+nest g class <directory-path>/<class-name>
+
+--dry-run：测试在哪创建，实际并不会创建文件
+
+3.原生响应
+
+```typescript
+findAll(@Res() response) {
+  response.status(202).send("这个请求返回所有咖啡！");
+}
+```
+
+默认为 express， 需要用 express 返回响应结果的方式
+
+
+
+### 二、服务：service
+
+创建：nest g s coffees --no-spec
+
+
+
+### 三、异常：HttpException
+
+两个参数：① 错误响应的消息字符串 ② 响应的状态码
+
+```typescript
+throw new HttpException(`找不到id为${id}的咖啡`, HttpStatus.NOT_FOUND);
+```
+
+辅助方法：
+
+```typescript
+throw new NotFoundException(`找不到id为${id}的咖啡`);
+```
+
+
+
+### 四、模块：module
+
+创建：nest g mo coffees --no-spec
+
+@module 的四个属性：① controllers； ② providers； ③ imports； ④ exports；
+
+每一个模块都是封闭独立的，需要导入别的模块导出的提供者，才可以在本模块中使用。
+
+
+
+### 五、数据传输对象： DTO
+
+用于封装数据并将其从一个应用程序发送到另一个应用程序。帮助系统定义接口的输入和输出。
+
+nest g class coffees/dto/create-coffee.dto --no-spec
+
+
+
+#### 1.ValidationPipe： 确保请求传递的参数正确（确保必填项等）的验证规则
+
+① 安装库：
+
+npm i class-validator class-transformer
+
+② 开启全局管道验证
+
+```typescript
+app.useGlobalPipes(new ValidationPipe());
+```
+
+③ DTO 添加验证规则
+
+```typescript
+import { IsString } from "class-validator";
+
+export class CreateCoffeeDto {
+  @IsString()
+  readonly name: string;
+
+  @IsString()
+  readonly brand: string;
+
+  @IsString({ each: true })
+  readonly flavors: string[];
+}
+```
+
+
+
+#### 2.常见的类型转换：
+
+安装：
+
+ npm i @nestjs/mapped-types
+
+例子：设置 DTO 中所有选项均为可选
+
+```typescript
+import { PartialType } from "@nestjs/mapped-types";
+import { CreateCoffeeDto } from "./create-coffee.dto";
+
+export class UpdateCoffeeDto extends PartialType(CreateCoffeeDto ) {}
+```
+
+
+
+#### 3.设置白名单：
+
+① 过滤不应有处理程序方法接收的参数
+
+```typescript
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,
+}));
+```
+
+② 存在非白名单属性时停止处理请求程序的执行并抛出错误
+
+```typescript
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+}));
+```
+
+③ 为传入参数中的"基本类型"执行类型转换
+
+解决：让传入对象为 DTO 对象的实例
+
+```typescript
+transform: true,
+```
+
+
+
+## **第二章**
+
+### 一、docker
+
+#### 1.安装 dokcer 并下载 mysql 镜像.略
+
+#### 2.根目录下创建一个 docker-compose.yml 文件，并写入
+
+```yaml
+version: '3'
+
+services:
+  db:
+    image: mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+```
+
+#### 3.启动 mysql 容器
+
+docker-compose up -d
+
+### 二、Typeorm
+
+#### 1.安装依赖项
+
+npm i @nestjs/typeorm typeorm mysql
+
+#### 2.通过 Typeorm 配置数据库与应用程序之间的关联
+
+在 app.module 文件中的 @module 装饰器中配置与 typeorm 的链接以及一些可用于将其与 Nest 集成的附加工具
+
+```typescript
+imports: [
+    CoffeesModule,
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "test",
+      password: "123456",
+      database: "nest-coffee",
+      autoLoadEntities: true, // 自动加载模块
+      synchronize: true, // Typeorm 每次运行实体时都会与数据库同步，确保在生产环境下禁用它
+    })
+  ],
+```
+
+#### 3.实体与列
+
+① 在 nest 中使用实体表示类与数据库表的关系，通过一个实体装饰器 @Entity() 装饰的类为数据库中一个实际存在的表
+
+② 列装饰器映射表中的每一列属性： @PrimaryGeneratedColumn()、@Column();
+
+```typescript
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+// @Entity("table-name") // 定义表名
+@Entity()
+export class coffee {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  name: string;
+
+  @Column()
+  brand: string;
+
+  @Column("json", { nullable: true })
+  flavors: string[];
+}
+```
+
+#### 4.在模块中注册实体
+
+```typescript
+import { coffee } from './entities/coffees.entity';
+imports: [
+  TypeOrmModule.forFeature([coffee])
+],
+```
+
+5.实体存储库（Repository 类）
+
+使用 typeorm 创建的实体都有自己的存储库，通过 Repository 类的各种方法来与存储在数据库中的记录进行交互
+
+```typescript
+import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { coffee } from './entities/coffees.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { CreateCoffeeDto } from './dto/create-coffee.dto';
+
+@Injectable()
+export class CoffeesService {
+  private coffees: coffee[] = [
+    {
+      id: 1,
+      name: "生椰拿铁",
+      brand: "瑞幸",
+      flavors: ["美味的", "浓郁的"],
+    }
+  ];
+
+  constructor(
+    @InjectRepository(coffee) 
+    private readonly coffeeRepository: Repository<coffee>
+  ) {}
+
+  findAll() {
+    return this.coffeeRepository.find();
+  }
+
+  async findOne(id: string) {
+    // throw "随机错误";
+    const coffee = await this.coffeeRepository.findOne({ where: { id: +id }});
+    if(!coffee) {
+      // throw new HttpException(`找不到id为${id}的咖啡`, HttpStatus.NOT_FOUND);
+      throw new NotFoundException(`找不到id为${id}的咖啡`);
+    }
+    return coffee;
+  }
+
+  create(createCoffeeDto: CreateCoffeeDto) {
+    const coffee = this.coffeeRepository.create(createCoffeeDto);
+    return this.coffeeRepository.save(coffee);
+  }
+
+  async update(id: string, updateCoffeeDto: any) {
+    // 先检查数据库中是否存在该实体，如果存在，则检索它且与之相关的内容，并将其内容替换为 updateCoffeeDto
+    // 如果检索不到则返回 undefined
+    const coffee = await this.coffeeRepository.preload({
+      id: +id,
+      ...updateCoffeeDto
+    })
+    if(!coffee) {
+      throw new NotFoundException(`找不到id为${id}的咖啡`);
+    }
+    return this.coffeeRepository.save(coffee);
+  }
+
+  async remove(id: string) {
+    const coffee = await this.findOne(id);
+    return this.coffeeRepository.remove(coffee);
+  }
+}
+
+```
+
+#### 5.多对多关系
+
+① 定义关系
+@ManyToMany() 装饰器：定义表与表之间的关系
+
+@JoinTable() 装饰器：确定表之间的所属关系
+
+```typescript
+// coffees.entity.ts
+
+@JoinTable()
+@ManyToMany(type => Flavor, flavor => flavor.coffees)
+flavors: string[];
+```
+
+```typescript
+// flavor.entity.ts
+
+import { Column, ManyToMany, PrimaryGeneratedColumn } from "typeorm";
+import { Coffee } from "./coffees.entity";
+
+export class Flavor {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  name: string;
+
+  @ManyToMany(type => Coffee, coffee => coffee.flavors)
+  coffees: Coffee[];
+}
+```
+
+注：风味表记得在模块中进行注册
+
+② 将风味表数据填充到响应中
+
+```typescript
+ return this.coffeeRepository.find({
+   relations: ['flavors']
+ });
+```
+
+#### 6.业务场景(级联插入)
+
+内容：我们将新咖啡添加到我们的数据库表中，并将其风味插入到数据库中（级联插入）
+
+① 开启关系级联插入/更新
+
+```typescript
+@ManyToMany(
+  type => Flavor, 
+  flavor => flavor.coffees,
+  {
+  cascade: true,  // ['insert']
+  }
+)
+```
+
+② 在 coffeeSerice.ts 中引入 flavorRepository
+
+```typescript
+@InjectRepository(Flavor)
+private readonly flavorRepository: Repository<Flavor>
+```
+
+③ 将风味名称输入参数并返回
+
+首先创建方法 => 如果数据库中已经存在指定名称的风味，则返回，否则创建新的实例
+
+```typescript
+private async preloadFlavorByName(name: string): Promise<Flavor> {
+  // 如果数据库中已经存在指定名称的风味，则返回，否则创建新的实例
+  const existingFlavor = await this.flavorRepository.findOne({
+  where: { name: name }, 
+  });
+  if(existingFlavor) {
+  return existingFlavor;
+  }
+  return this.flavorRepository.create({ name });
+}
+```
+
+然后在 create 和 update 中，将风味数组进行循环，以确定是否添加到数据库，同时将结果返回并存入数据库
+
+```typescript
+async create(createCoffeeDto: CreateCoffeeDto) {
+  // 将风味数组进行循环，以确定是否添加到数据库,同时将结果返回并存入数据库
+  const flavors = await Promise.all(
+  createCoffeeDto.flavors.map(name => this.preloadFlavorByName(name)),
+  );
+
+  // 将 createCoffeeDto 与更新的 Flavor 实体合并
+  const coffee = this.coffeeRepository.create({
+  ...createCoffeeDto,
+  flavors,
+  });
+  return this.coffeeRepository.save(coffee);
+  }
+
+  async update(id: string, updateCoffeeDto: any) {
+  // 同上
+  const flavors = updateCoffeeDto.flavors && 
+  (await Promise.all(
+  updateCoffeeDto.flavors.map(name => this.preloadFlavorByName(name)),
+  ));
+
+  // 先检查数据库中是否存在该实体，如果存在，则检索它且与之相关的内容，并将其内容替换为 updateCoffeeDto
+  // 如果检索不到则返回 undefined
+  const coffee = await this.coffeeRepository.preload({
+  id: +id,
+  ...updateCoffeeDto,
+  flavors
+  })
+  if(!coffee) {
+  throw new NotFoundException(`找不到id为${id}的咖啡`);
+  }
+  return this.coffeeRepository.save(coffee);
+}
+```
+
+#### 7.limit 和 offset
+
+① 新建 DTO (创建在 common 文件夹下)
+
+```typescript
+import { IsOptional, IsPositive } from "class-validator";
+
+export class PaginationQueryDto {
+  @IsOptional() // 标记属性为可选属性，即属性缺失也不会报错
+  @IsPositive() // 检查是否为证书
+  // @Type(() => Number) // 由全局管道中开启数据类型的隐式转换
+  limit: number;
+
+  @IsOptional()
+  @IsPositive()
+  offset: number;
+}
+```
+
+② 验证管道添加数据类型隐式转换
+
+```typescript
+// main.ts
+
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { // 全局数据类型的隐式转换
+    enableImplicitConversion: true,
+  }
+}));
+```
+
+③ 修改控制器和服务中的方法 => 传入 DTO 和 修改 Repository 的 find 方法
+
+控制器.略
+
+```typescript
+findAll(paginationQueryDto: PaginationQueryDto) {
+  const { limit, offset } = paginationQueryDto;
+  return this.coffeeRepository.find({
+  relations: ['flavors'],
+  take: limit,
+  skip: offset,
+  });
+}
+```
+
+####  ***8.业务场景(事务)
+
+产品团队希望用户能够推荐不同的咖啡
+
+技术： 使用 QueryRunner，可以完全控制事务
+
+① 根目录下 events 文件夹实体目录下新建 DTO
+
+```typescript
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+@Entity()
+export class Event {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  type: string;
+
+  @Column()
+  name: string;
+
+  @Column("json")
+  payload: Record<string, any> // 对象：key 为 string, value 为 any
+}
+```
+
+② 在 coffee.module 中注册实体并在 coffee.entity 中创建 "推荐" 列
+
+```typescript
+@Column({ default: 0 })
+recommendations: number;
+```
+
+③ 在 coffee.service 中使用 Connection 对象创建事务 =>创建连接成功后，开始执行事务，并设置回滚
+
+```typescript
+@InjectDataSource()
+private readonly dataSource: DataSource,
+```
+
+```typescript
+// 确保对数据库的多个操作只有在都成功时才执行
+async recommendCoffee(coffee: Coffee) {
+  const queryRunner = this.dataSource.createQueryRunner();
+
+  await queryRunner.connect(); // 连接
+  await queryRunner.startTransaction(); // 开始交易
+  try {
+    coffee.recommendations++;
+
+    const recommendEvent = new Event();
+    recommendEvent.name = "recommend_coffee";
+    recommendEvent.type = "coffee";
+    recommendEvent.payload = { coffeeId: coffee.id };
+  } catch (err) {
+    await queryRunner.rollbackTransaction(); // 出错回滚
+  } finally {
+    await queryRunner.release(); // 关闭
+  }
+}
+```
+
+####  9.索引-加速数据库搜索引擎
+
+类或字段加 @Index() 装饰器
+
+```typescript
+@Index(["name", "type"])
+@Entity()
+export class Event {}
+```
+
+```typescript
+@Index()
+@Column()
+name: string;
+```
+
+
+
+#### ***10.数据库迁移
+
+p33
+
+
+
+## 第三章
+
+### 一、依赖注入
+
+#### 1.nest 依赖注入原理
