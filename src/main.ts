@@ -8,6 +8,9 @@ async function bootstrap() {
     whitelist: true,
     forbidNonWhitelisted: true,
     transform: true,
+    transformOptions: { // 全局数据类型的隐式转换
+      enableImplicitConversion: true,
+    }
   }));
   await app.listen(3000);
 }
