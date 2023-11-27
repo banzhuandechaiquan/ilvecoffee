@@ -610,5 +610,174 @@ constructor(private readonly coffeesService: CoffeesService) {}
 
 ① useValue
 
+使用场景：常量，Nest 使用外部库，或使用 Mock 进行替换服务的真实实现
 
+案例：使用 MockCoffeeService 模拟服务实现
 
+```typescript
+class MockCoffeeService {};
+
+@Module({
+  providers: [
+    {
+      provide: CoffeesService, // TOKEN
+      useValue: MockCoffeeService
+    }
+  ],
+})
+```
+
+② 自定义 "TOKEN" 令牌
+
+案例：自定义字符串作为提供者令牌
+
+```typescript
+providers: [
+  CoffeesService,
+  {
+  provide: COFFEE_BRANDS,
+  useValue: ["雀氏", "瑞幸"]
+  }
+], 
+```
+
+注入：使用 @Inject() 装饰器
+
+```typescript
+constructor(
+	@Inject(COFFEE_BRANDS) coffeeBrands: string[],
+) {
+	console.log(coffeeBrands);
+}
+```
+
+ 注：COFFEE_BRANDS 变量为常量文件夹定义
+
+```typescript
+// coffees.constants.ts
+
+export const COFFEE_BRANDS = "COFFEE_BRANDS";
+```
+
+③ useClass
+
+场景：例如应用程序中有一个抽象或默认的 ConfigService 类，根据当前环境，我们需要为 Nest 每个配置服务提供不同的实现
+
+```typescript
+class ConfigService {}
+class DevelopmentConfigService {}
+class ProductionConfigService {}
+
+{
+  provide: ConfigService,
+  useClass: process.env.NODE_ENV === "development" 
+  ? DevelopmentConfigService 
+  : ProductionConfigService
+}
+```
+
+④ useFactory
+
+"动态" 创建提供者。提供者的值基于其他依赖项，可以注入计算返回结果所需的其他提供程序。
+
+简单使用：
+
+```typescript
+{
+  provide: COFFEE_BRANDS,
+  useFactory: () => ["雀氏", "瑞幸"]
+}
+```
+
+工厂函数注入提供者：
+
+```typescript
+@Injectable()
+export class CoffeeBrandFactory {
+  create() {
+    // do something...
+    return ["雀氏", "瑞幸"];
+  }
+}
+
+providers: [
+  CoffeesService,
+  CoffeeBrandFactory, // 需要先注册工厂函数所需的提供者
+  {
+    provide: COFFEE_BRANDS,
+    useFactory: (brandFactory: CoffeeBrandFactory) => brandFactory.create(),
+    inject: [CoffeeBrandFactory]
+  }
+], 
+```
+
+⑤ 异步提供程序
+
+场景：在与数据库连接成功前，不接受请求
+
+使用：将 async/await 与 useFactory 结合使用
+
+```typescript
+providers: [
+  {
+  provide: COFFEE_BRANDS,
+  useFactory: async (dataSource: DataSource): Promise<string[]> => {
+    // const coffeeBrands = await dataSource.query('SELECT * ...');
+    const coffeeBrands = await Promise.resolve(["雀氏", "瑞幸", "666"]); // 模拟从数据库获取数据后才返回
+    return coffeeBrands;
+  },
+  inject: [DataSource],
+  }
+], 
+```
+
+#### 4.动态模块
+
+场景：通用模块需要在不同情况下有不同的表现
+
+案例：创建一个 DatabaseModule，它可以在实例化之前传递配置设置（模拟）
+
+```typescript
+import { DynamicModule, Module } from '@nestjs/common';
+import { DataSourceOptions, DataSource } from 'typeorm';
+
+@Module({})
+export class DatabaseModule {
+  static register(options: DataSourceOptions): DynamicModule {
+    return {
+      module: DatabaseModule,
+      providers: [
+        {
+          provide: "CONNECTON",
+          useValue: new DataSource(options)
+        }
+      ]
+    }
+  }
+}
+```
+
+使用：
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CoffeeRatingService } from './coffee-rating.service';
+import { CoffeesModule } from 'src/coffees/coffees.module';
+import { DatabaseModule } from 'src/database/database.module';
+
+@Module({
+  imports: [
+    CoffeesModule,
+    DatabaseModule.register({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+    })
+  ],
+  providers: [CoffeeRatingService],
+})
+export class CoffeeRatingModule {}
+
+```
+
+#### 5.获得所需提供者生命周
