@@ -61,7 +61,9 @@ nest g class coffees/dto/create-coffee.dto --no-spec
 
 
 
-#### 1.ValidationPipe： 确保请求传递的参数正确（确保必填项等）的验证规则
+#### 1.ValidationPipe
+
+ 确保请求传递的参数正确（确保必填项等）的验证规则
 
 ① 安装库：
 
@@ -92,7 +94,7 @@ export class CreateCoffeeDto {
 
 
 
-#### 2.常见的类型转换：
+#### 2.常见的类型转换
 
 安装：
 
@@ -109,7 +111,7 @@ export class UpdateCoffeeDto extends PartialType(CreateCoffeeDto ) {}
 
 
 
-#### 3.设置白名单：
+#### 3.设置白名单
 
 ① 过滤不应有处理程序方法接收的参数
 
@@ -780,4 +782,286 @@ export class CoffeeRatingModule {}
 
 ```
 
-#### 5.获得所需提供者生命周
+#### 5.获得所需提供者生命周期
+
+​		Nest 并不遵循请求/响应的多线程无状态模型，默认情况下每个提供者都是一个单例。例如，在 CoffeeService 中使用 @Injectable() 时，其实是将其传递给具有作用域和 Scope.DEFAULT 的对象。(DEFAULT 是 单例模式 Singleton 的值)。
+
+```typescript
+@Injectable({ scope: Scope.DEFAULT })
+```
+
+提供者的生命周期与应用程序的生命周期直接相关。
+
+@Injectable() 提供者可用的另外两个声明周期： "瞬态"，"请求范围"。
+
+①  "瞬态" 提供者不会在多个注入对象中共享，注入 "瞬态" 提供者的每个对象都将得到新专用实例
+
+```typescript
+@Injectable({ scope: Scope.TRANSIENT })
+
+constructor(
+    @InjectRepository(Coffee) 
+    private readonly coffeeRepository: Repository<Coffee>,
+    @InjectRepository(Flavor)
+    private readonly flavorRepository: Repository<Flavor>, 
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+    @Inject(COFFEE_BRANDS) coffeeBrands: string[],
+  ) {
+    console.log("666");
+  }
+```
+
+打印结果有两次，因此确定该提供者在应用程序中会被多次实例化。
+
+② "请求范围" 为每一个请求提供一个新的提供者实例，在请求完成后，Nest 会自动对实例进行垃圾收集
+
+```typescript
+@Injectable({ scope: Scope.REQUEST })
+```
+
+​		当对该提供者所处理的程序每发送一次请求时，就会打印一遍，因此提供者为每一次请求单独创建一次实例，并在请求结束后被回收。
+
+### 二、加载运行时配置
+
+#### 1.从当前环境加载配置
+
+① 安装：
+
+npm i @nestjs/config
+
+② 创建 .env 环境文件
+
+```typescript
+// .env
+
+DATABASE_USER=test
+DATABASE_PASSWORD=123456
+DATABASE_NAME=nest-coffee
+DATABASE_PORT=3306
+DATABASE_HOST=localhost
+```
+
+③ 引入配置模块并修改连接数据库配置：
+
+```typescript
+imports: [
+  ConfigModule.forRoot(), // 默认从应用程序的根目录下查找 .env 文件
+  TypeOrmModule.forRoot({
+    type: "mysql",
+    host: process.env.DATABASE_HOST,
+    port: +process.env.DATABASE_PORT,
+    username: process.env.DATABASE_USER,
+    password: process.env.DATABASE_PASSWORD,
+    database: process.env.DATABASE_NAME,
+    autoLoadEntities: true, // 自动加载模块
+    synchronize: true, // Typeorm 每次运行实体时都会与数据库同步，确保在生产环境下禁用它
+  }),
+],
+```
+
+#### 2.为 ConfigModule 指定路径
+
+```typescript
+ConfigModule.forRoot({
+	envFilePath: ".environment",
+}),
+```
+
+#### 3.禁用加载 .env 文件(例如生产环境下)
+
+```typescript
+ConfigModule.forRoot({
+  ignoreEnvFile: true, 
+}),
+```
+
+#### 4.验证环境变量
+
+​		环境变量对于应用程序的正常启动至关重要，必须确保应用程序运行前拥有所有的必需变量，否则，在应用程序启用期间必须抛出异常。
+
+技术：利用 joi 包确保任何重要的环境变量得到验证
+
+① 安装：
+
+npm i  @hapi/joi 
+
+npm i --save-dev @types/hapi__joi
+
+② 定义 joi 验证
+
+```typescript
+import * as Joi from '@hapi/joi';
+
+ConfigModule.forRoot({
+  validationSchema: Joi.object({
+    DATABASE_HOST: Joi.required(),
+    DATABASE_PORT: Joi.number().default(3306)
+  })
+}),
+```
+
+#### 5.ConfigService
+
+​		在应用程序中设置了 ConfigModule 后，其带有一个名为 CongifService 的有用服务，它提供了一个 get() 方法来读取我们所有已解析的配置变量。
+
+使用 CongifService：
+
+① 将它从包含的模块 ConfigModule 导入到任何需要使用它的模块
+
+```typescript
+// coffee.module.ts
+
+imports: [
+  ConfigModule
+],
+```
+
+② 使用 get 方法
+
+```typescript
+export class CoffeesService {
+  constructor(
+    private readonly configService: ConfigService,
+  ) {
+    const databaseHost = this.configService.get<string>("DATABASE_HOST", "666"); // 第二个参数为默认值
+    console.log(databaseHost);
+  }
+} 
+```
+
+#### 6.自定义配置文件返回嵌套对象
+
+​		自定义配置文件可以让应用程序按照 "业务域" 对相关配置设置进行分组。将相关设置存储在单个文件中，并独立管理它们。
+
+① 新建 src/config/app.config.ts 文件
+
+```typescript
+export default () => ({
+  environment: process.env.NODE_ENV || "development",
+  database: {
+    host: process.env.DATABASE_HOST,
+    port: parseInt(process.env.DATABASE_PORT, 10) || 3306
+  }
+})
+```
+
+优点：可以完全控制返回的配置对象，可以添加任何逻辑：转换类型/设置默认值
+
+② 使用自定义配置文件：
+
+```typescript
+// app.module.ts
+
+@module({
+  imports:[
+    ConfigModule.forRoot({
+      load: [appConfig] // 接受一个配置数组
+    }),
+  ]
+})
+```
+
+```typescript
+// coffee.service.ts
+
+export class CoffeesService {
+  constructor(
+    private readonly configService: ConfigService,
+  ) {
+    const databaseHost = this.configService.get("database.host", "666"); // 第二个参数为默认值
+    console.log(databaseHost);
+  }
+}
+```
+
+缺点：没有类型推断
+
+#### 7.自定义配置文件命名空间
+
+解决问题：
+
+配置命名空间和部分注册来验证配置设置，以此来解决大项目中单独服务于业务的各种配置文件和类型推断的问题。
+
+① 新建 src/coffee/config/coffee.config.ts 文件
+
+```typescript
+// coffee/config/coffee.config.ts
+
+import { registerAs } from "@nestjs/config";
+ 
+// registerAs 函数在 key 下注册一个命名空间的配置对象
+export default registerAs("coffees", () => ({
+  foo: "bar",
+}));
+```
+
+② 使用
+
+```typescript
+// coffee.module.ts
+
+@Module({
+imports: [
+  ConfigModule.forFeature(coffeeConfig), // 部分注册
+],
+```
+
+```typescript
+// coffee.service.ts
+
+@Injectable()
+export class CoffeesService {
+  constructor(
+    @Inject(coffeeConfig.KEY)
+    private readonly coffeesConfiguration: ConfigType<typeof coffeeConfig>
+  ) {
+    console.log(coffeesConfiguration.foo);
+  }
+}
+```
+
+#### 8.异步加载提供者
+
+让提供者的导入顺序不会影响到程序的执行。本质上是先执行完同步后再执行异步。
+
+```typescript
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { CoffeesModule } from './coffees/coffees.module';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { CoffeeRatingModule } from './coffee-rating/coffee-rating.module';
+import { DatabaseModule } from './database/database.module';
+import { ConfigModule } from '@nestjs/config';
+import * as Joi from '@hapi/joi';
+import appConfig from './config/app.config';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRootAsync({
+      useFactory: () => ({
+        type: "mysql",
+        host: process.env.DATABASE_HOST,
+        port: +process.env.DATABASE_PORT,
+        username: process.env.DATABASE_USER,
+        password: process.env.DATABASE_PASSWORD,
+        database: process.env.DATABASE_NAME,
+        autoLoadEntities: true, // 自动加载模块
+        synchronize: true, // Typeorm 每次运行实体时都会与数据库同步，确保在生产环境下禁用它
+      })
+    }),
+    ConfigModule.forRoot({
+      load: [appConfig] // 接受一个配置数组
+    }),
+    CoffeesModule,
+    CoffeeRatingModule,
+    DatabaseModule
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+
+```
+
