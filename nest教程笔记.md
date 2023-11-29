@@ -1065,3 +1065,315 @@ export class AppModule {}
 
 ```
 
+## 第四章
+
+### 一、Nest 四大功能模块
+
+#### 1.介绍
+
+① 异常过滤器负责处理应用程序中可能发生的未处理异常，并返回给客户端。
+
+② 管道通常用于 "转换" 数据类型和 "验证" 数据的有效性。如果数据无效，则抛出异常。	
+
+③ 守卫用于给定请求是否满足条件，例如身份验证，授权等。只有条件满足，才被允许访问路由。
+
+④ 拦截器用于在方法执行之前或之后绑定额外的逻辑，也可以转换结果，拓展方法和覆盖方法。
+
+#### 2.绑定
+
+将 Nest 四大功能模块绑定到应用程序的不同部分的方式
+
+① "全局" 范围
+
+```typescript
+// main.ts
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    transformOptions: { // 全局数据类型的隐式转换
+      enableImplicitConversion: true,
+    }
+  }));
+  await app.listen(3000);
+}
+```
+
+问题：不能在全局范围注入任何依赖项
+
+解决：使用基于自定义提供程序的语法直接从 Nest 模块内容注册全局管道
+
+```typescript
+// app.module.ts
+
+providers: [
+  {
+    provide: APP_PIPE,
+    useClass: ValidationPipe
+  },
+],
+```
+
+② "控制器" 范围
+
+```typescript
+// coffee.controller.ts
+
+import { ValidationPipe } from '@nestjs/common';
+
+// @UsePipes(ValidationPipe, ...) // 逗号隔开使用多管道
+@UsePipes(new ValidationPipe()) // 需要将特定配置对象传递给 ValidationPipe 时使用实例
+@Controller('coffees')
+export class CoffeesController {}
+```
+
+③ "方法" 范围
+
+```typescript
+// coffee.controller.ts
+
+@UsePipes(ValidationPipe)
+@Get()
+findAll(@Query() paginationQueryDto: PaginationQueryDto) {
+  return this.coffeesService.findAll(paginationQueryDto);
+}
+```
+
+④ "参数" 范围(仅适用于管道)
+
+```typescript
+@Patch(":id")
+update(@Param("id") id: string, @Body(ValidationPipe) updateCoffeeDto: UpdateCoffeeDto) {
+	return this.coffeesService.update(id, updateCoffeeDto);
+}
+```
+
+#### 3.管道
+
+略
+
+#### 4.异常过滤层
+
+​		当应用程序出现未处理异常时，该层会自动捕获它，并发送适当的友好响应。实现准确 "控制流" 和被发送回客户端的响应内容。
+
+案例：创建一个 ExceptionFilter，负责捕获 HttpException 类的异常，实现自定义响应逻辑。
+
+```typescript
+// src/common/filters/http-exception.ts
+
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from "@nestjs/common";
+import { Response } from "express";
+
+@Catch(HttpException) // 逗号隔开可以同时处理多个异常类
+// 访问底层平台的 Response 对象，以便可以操作或转换它并继续发送响应
+export class HttpExceptionFilter<T extends HttpException> implements ExceptionFilter {
+  catch(exception: T, host: ArgumentsHost) {
+    const ctx = host.switchToHttp(); // switchToHttp() 可以访问请求或响应对象
+    const response = ctx.getResponse<Response>(); // 返回 底层平台 响应  
+
+    const status = exception.getStatus();
+    const exceptionResponse = exception.getResponse();
+    const error = typeof response === "string"
+      ? { message: exceptionResponse } // 如果错误为 string 类型需要创建一个对象并将 message 作为它的属性
+      : (exceptionResponse as object) // 否则错误已经为一个对象类型
+    
+    response.status(status).json({
+      ...error,
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+```
+
+绑定：
+
+```typescript
+// mian.ts
+
+app.useGlobalFilters(new HttpExceptionFilter());
+```
+
+#### 5.守卫
+
+​		守卫的作用：确定是否允许给定请求访问某些内容。常用于身份验证和授权。例如：实现一个守卫，提取和验证 Token，并使用提取的信息来确定请求是否可以继续。
+
+案例：
+
+① 验证 AP_KEY 是否存在于 "授权" 请求头中
+
+```typescript
+// src/common/guard/api-key.ts
+
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { Request } from "express";
+import { Observable } from "rxjs";
+
+@Injectable()
+export class ApiKeyGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> { // 返回 true 则继续请求
+    // 从任何未标记为 公共 的传入请求中检索 API_KEY
+    const request = context.switchToHttp().getRequest<Request>();
+    const authHeader = request.header('Authorization');
+    return authHeader === process.env.API_KEY; // 与 .env 文件的 API_KEY 变量进行全等判断
+  }
+}
+```
+
+绑定：
+
+```typescript
+// main.ts
+
+app.useGlobalGuards(new ApiKeyGuard());
+```
+
+② 检测正在访问的路由是否为"公共"
+
+技术：使用 @SetMetadata 自定义元数据，将其附加到路由处理程序上
+
+- 自定义元数据装饰器
+
+```typescript
+// src/common/decorator/public.decorator.ts
+
+import { SetMetadata } from "@nestjs/common";
+
+export const IS_PUBLIC_KEY = "isPublic"; // SetMetadata 装饰器的 key
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+```
+
+- 将路由绑定自定义元数据
+
+```typescript
+@Public()
+@Get()
+  findAll(@Query() paginationQueryDto: PaginationQueryDto) {
+  return this.coffeesService.findAll(paginationQueryDto);
+}
+```
+
+- 在守卫中判断是否为 "公共" 组件，如果是，不需要验证
+
+```typescript
+// src/common/guard/api-key.ts
+
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { Request } from "express";
+import { Observable } from "rxjs";
+import { IS_PUBLIC_KEY } from "../decorator/public.decorator";
+import { ConfigService } from "@nestjs/config";
+
+@Injectable()
+export class ApiKeyGuard implements CanActivate {
+  constructor(
+    // 此处使用到了依赖注入，因此全局守卫必须在模块中绑定
+    private readonly reflector: Reflector,
+    private readonly configService: ConfigService
+  ) {} // Reflector 类允许在特定上下文中检索元数据
+
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> { // 返回 true 则继续请求
+
+    const isPublic = this.reflector.get(IS_PUBLIC_KEY, context.getHandler());
+    if(isPublic) {
+      return true;
+    }else {
+      // 从任何未标记为 公共 的传入请求中检索 API_KEY
+      const request = context.switchToHttp().getRequest<Request>();
+      const authHeader = request.header('Authorization');
+      return authHeader === this.configService.get("API_KEY"); // 与 .env 文件的 API_KEY 变量进行全等判断
+    }
+  }
+}
+```
+
+注：由于使用了依赖注入，因此必须在模块中进行守卫绑定
+
+- 创建通用组件绑定全局守卫
+
+```typescript
+// src/common/common.module.ts
+
+import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ApiKeyGuard } from './guards/api-key';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ApiKeyGuard
+    }
+  ]
+})
+export class CommonModule {}
+```
+
+注：该通用模块必须在 app.module 中注册
+
+#### 6.拦截器
+
+​		通过向现有代码添加额外的行为来是实现，从而无需修改代码
+
+案例：响应数据位于 data 中
+
+```typescript
+// src/common/interceptor/wrap-response
+
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from "@nestjs/common";
+import { map, tap } from "rxjs/operators";
+import { Observable } from "rxjs";
+
+@Injectable()
+export class WrapResponseInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler<any>): Observable<any> | Promise<Observable<any>> {
+    return next.handle().pipe(map((data) => ({ data })));  
+  }
+}
+```
+
+```typescript
+// main.ts
+
+app.useGlobalInterceptors(new WrapResponseInterceptor());
+```
+
+案例：通过 RxJS 操作符来拓展基本函数行为处理超时请求
+
+```typescript
+// src/common/interceptor/timout.ts
+
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor, RequestTimeoutException } from "@nestjs/common";
+import { Observable, TimeoutError, catchError, throwError, timeout } from "rxjs";
+
+@Injectable()
+export class Timeoutnterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler<any>): Observable<any> 
+  | Promise<Observable<any>> {
+    return next.handle().pipe(
+      timeout(3000), 
+      catchError(err => {
+        if(err instanceof TimeoutError) {
+          return throwError(new RequestTimeoutException());
+        }else {
+          return throwError(err);
+        }
+      })
+    );
+  }
+}
+```
+
+```typescript
+// main.ts
+
+app.useGlobalInterceptors(new WrapResponseInterceptor(), new Timeoutnterceptor());
+```
+
