@@ -1153,7 +1153,41 @@ update(@Param("id") id: string, @Body(ValidationPipe) updateCoffeeDto: UpdateCof
 
 #### 3.管道
 
-略
+​		管道两个用例：输入数据转换为所需的输出；验证输入的数据是否通过，否则抛出异常。
+
+案例：自定义管道：将传入的字符串转换为整数
+
+```typescript
+// src/common/pipes/parse-int.ts
+
+import { ArgumentMetadata, BadRequestException, Injectable, PipeTransform } from "@nestjs/common";
+
+@Injectable()
+export class ParseIntPipe implements PipeTransform {
+  transform(value: string, metadata: ArgumentMetadata) {
+    const val = parseInt(value, 10);
+    if(isNaN(val)) {
+      throw new BadRequestException(`验证错误, ${val}不是整型`);
+    }else {
+      return val; 
+    }
+  }
+}
+```
+
+绑定：
+
+```typescript
+// coffee.controller.ts
+
+@Get(":id")
+findOne(@Param("id", ParseIntPipe) id: number) {
+  console.log(id);
+  return this.coffeesService.findOne("" + id);
+}
+```
+
+
 
 #### 4.异常过滤层
 
@@ -1375,5 +1409,84 @@ export class Timeoutnterceptor implements NestInterceptor {
 // main.ts
 
 app.useGlobalInterceptors(new WrapResponseInterceptor(), new Timeoutnterceptor());
+```
+
+### 二、中间件
+
+​		中间件是一个在处理路由程序和任何其他构建块之前调用的函数，包括拦截器，守卫和管道。通常执行的任务：执行代码‘；更改请求和响应对象；结束请求/响应周期；在调用堆栈中调用 next() 中间件函数。
+
+注：如果中间件函数没有结束请求/响应周期，必须调用 next() 方法，将请求传递给下一个中间件。否则，请求将被挂起，永远不会完成。
+
+案例：创建一个简单的中间件
+
+```typescript
+// src/common/middleware/logging.middleware.ts
+
+import { Injectable, NestMiddleware } from '@nestjs/common';
+
+@Injectable()
+export class LoggingMiddleware implements NestMiddleware {
+  use(req: any, res: any, next: () => void) {
+    console.log("执行中间件zzz");
+    
+    next();
+  }
+}
+```
+
+注册中间件
+
+```typescript
+// src/common.module.ts
+
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { LoggingMiddleware } from './middleware/logging.middleware';
+
+@Module({})
+export class CommonModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) { // MiddlewareConsumer 提供了一组方法将中间件绑定到特定的路由
+    consumer.apply(LoggingMiddleware).forRoutes("*");  
+  }
+}
+```
+
+将中间件绑定到不同路由
+
+```typescript
+// 仅绑定到前缀为 coffees 的 get 请求上
+consumer.apply(LoggingMiddleware).forRoutes({path: "coffees", method: RequestMethod.GET});
+```
+
+```typescript
+// 过滤前缀为 coffees 的请求
+consumer.apply(LoggingMiddleware).exclude("coffees").forRoutes("*"); 
+```
+
+### 三、自定义装饰器
+
+```typescript
+// src/common/decorator/decorator.protocol.ts
+
+import { createParamDecorator, ExecutionContext } from "@nestjs/common";
+
+export const Protocol = createParamDecorator(
+  (defaultValue: string, ctx: ExecutionContext) => {
+    console.log({ defaultValue });
+    const request = ctx.switchToHttp().getRequest();
+    return request.Protocol;
+  }
+)
+```
+
+绑定：
+
+```typescript
+// coffee.controller.ts
+
+@Get()
+async findAll(@Protocol("https") protocol: string, @Query() paginationQueryDto: PaginationQueryDto) {
+  console.log("protocol", protocol);
+  return this.coffeesService.findAll(paginationQueryDto);
+}
 ```
 

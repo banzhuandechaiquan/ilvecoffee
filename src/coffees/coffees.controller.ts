@@ -1,8 +1,12 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Res, SetMetadata, UsePipes, ValidationPipe } from '@nestjs/common';
 import { CoffeesService } from './coffees.service';
 import { CreateCoffeeDto } from './dto/create-coffee.dto';
 import { UpdateCoffeeDto } from './dto/update-coffee.dto';
 import { PaginationQueryDto } from 'src/common/Pagination-query.dto';
+import { Public } from 'src/common/decorator/public.decorator';
+import { resolve } from 'path';
+import { ParseIntPipe } from 'src/common/pipes/parse-int';
+import { Protocol } from 'src/common/decorator/protocol.decorator';
 
 @Controller('coffees')
 export class CoffeesController {
@@ -11,15 +15,17 @@ export class CoffeesController {
   // findAll(@Res() response) {
   //   response.status(202).send("这个请求返回所有咖啡！");
   // }
-
+  @Public()
   @Get()
-  findAll(@Query() paginationQueryDto: PaginationQueryDto) {
+  async findAll(@Protocol("https") protocol: string, @Query() paginationQueryDto: PaginationQueryDto) {
+    console.log("protocol", protocol);
+    // await new Promise(resolve => setTimeout(resolve, 5000));
     return this.coffeesService.findAll(paginationQueryDto);
   }
 
   @Get(":id")
-  findOne(@Param("id") id: number) {
-    console.log(typeof id);
+  findOne(@Param("id", ParseIntPipe) id: number) {
+    console.log(id);
     return this.coffeesService.findOne("" + id);
   }
 
